@@ -1,125 +1,150 @@
 import os
 import re
 import time
-from datetime import datetime
 import requests
-from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
+from datetime import datetime
+from playwright.sync_api import sync_playwright
 
-WIDGET_URL = "https://www.citaconsular.es/es/hosteds/widgetdefault/28cf6fbfe043643def303827bba87344a"
-SERVICES_URL_REGEX = re.compile(r".*/#services$")
+URL_INICIAL = "https://www.exteriores.gob.es/Embajadas/brasilia/pt/Embajada/Paginas/CitaNacionalidadLMD.aspx"
 
-BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
-CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
-
-# Se você rodar com FORCE_TEST_ALERT=1, ele manda alerta mesmo sem vaga.
-FORCE_TEST_ALERT = os.getenv("FORCE_TEST_ALERT", "").strip() == "1"
+BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 
-def send_telegram(msg: str) -> None:
+def tg_send_message(text: str):
     if not BOT_TOKEN or not CHAT_ID:
-        print("⚠️ TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID não configurados.")
+        print("Telegram não configurado (secrets ausentes).")
         return
-
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    r = requests.post(url, data={"chat_id": CHAT_ID, "text": msg}, timeout=20)
-    if r.status_code != 200:
-        print("⚠️ Falha ao enviar Telegram:", r.status_code, r.text)
-    else:
-        print("📨 Telegram enviado com sucesso.")
+    r = requests.post(url, data={"chat_id": CHAT_ID, "text": text}, timeout=30)
+    print("Telegram sendMessage:", r.text)
 
 
-def check_once():
-    now = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+def tg_send_photo(photo_path: str, caption: str):
+    if not BOT_TOKEN or not CHAT_ID:
+        print("Telegram não configurado (secrets ausentes).")
+        return
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
+    with open(photo_path, "rb") as f:
+        r = requests.post(
+            url,
+            data={"chat_id": CHAT_ID, "caption": caption},
+            files={"photo": f},
+            timeout=60,
+        )
+    print("Telegram sendPhoto:", r.text)
 
+
+def check_once(debug_send_estado: bool = False) -> bool:
+    """
+    Retorna True se encontrou vaga (e avisou).
+    Retorna False se não encontrou / sem vagas / estado inesperado.
+    """
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
-        context = browser.new_context()
+        context = browser.new_context(viewport={"width": 1280, "height": 720})
+        page = context.new_page()
 
-        def auto_accept_dialog(d):
+        def on_dialog(d):
             try:
                 d.accept()
-            except:
+            except Exception:
                 pass
 
-        page = context.new_page()
-        page.on("dialog", auto_accept_dialog)
+        page.on("dialog", on_dialog)
+        page.goto(URL_INICIAL, wait_until="domcontentloaded", timeout=90_000)
 
-        print(f"[{now}] Abrindo widget: {WIDGET_URL}")
-        page.goto(WIDGET_URL, timeout=60000, wait_until="domcontentloaded")
+        # cookies (se aparecer)
+        for sel in [
+            "button:has-text('Aceitar')",
+            "button:has-text('Aceptar')",
+            "button:has-text('Accept')",
+        ]:
+            try:
+                page.locator(sel).first.click(timeout=1500)
+                break
+            except Exception:
+                pass
 
-        # Clica Continue/Continuar (pode estar como botão)
-        # Alguns casos: role=button name contém Continue / Continuar
+        # entrar no citaconsular (não depende de texto)
+        page.locator("a[href*='citaconsular']").first.click(timeout=30_000)
+        page.wait_for_timeout(1500)
+
+        # nova aba OU mesma aba (não falha)
+        cita = page
         try:
-            page.get_by_role("button", name=re.compile(r"continue|continuar", re.I)).click(timeout=30000)
-        except PWTimeout:
-            # fallback: tenta clicar pelo texto
-            page.locator("text=Continue / Continuar").click(timeout=30000)
+            context.wait_for_event("page", timeout=5000)
+            cita = context.pages[-1]
+        except Exception:
+            cita = page
 
-        # Espera ir para /#services
+        cita.on("dialog", on_dialog)
+        cita.wait_for_load_state("domcontentloaded", timeout=90_000)
+
+        # PASSO CRÍTICO: clicar em Continue/Continuar com tentativas
+        for _ in range(3):
+            try:
+                cita.get_by_role("button", name=re.compile(r"Continue|Continuar", re.I)).click(timeout=10_000)
+                break
+            except Exception:
+                try:
+                    cita.locator("text=Continue / Continuar").click(timeout=10_000)
+                    break
+                except Exception:
+                    cita.wait_for_timeout(1000)
+
+        # tenta ir para #services; se não for, força o hash após carregar base (evita erro de ir direto)
+        base_url = cita.url.split("#")[0]
         try:
-            page.wait_for_url(SERVICES_URL_REGEX, timeout=45000)
-        except PWTimeout:
-            # Às vezes muda sem atualizar a URL imediatamente; tenta detectar pelo conteúdo
-            time.sleep(3)
+            cita.wait_for_url(re.compile(r"#services"), timeout=25_000)
+        except Exception:
+            try:
+                cita.goto(base_url + "#services", wait_until="domcontentloaded", timeout=60_000)
+            except Exception:
+                pass
 
-        current = page.url
-        print(f"[{now}] URL atual: {current}")
+        cita.wait_for_timeout(2000)
+        body = cita.locator("body").inner_text(timeout=10_000)
+        now = datetime.now().strftime("%d/%m/%Y %H:%M")
 
-        # Confere se chegou na etapa certa
-        on_services = current.endswith("/#services") or "#services" in current
+        # modo silencioso (sem vaga)
+        if "No hay horas disponibles" in body:
+            print(f"[{now}] Sem vagas")
+            browser.close()
+            return False
 
-        body = page.locator("body").inner_text(timeout=20000)
+        # procurar horário livre
+        slot = cita.locator(r"text=/\b\d{2}:\d{2}\b.*Hueco libre/").first
+        if slot.count() > 0:
+            slot_text = slot.inner_text(timeout=2000).strip()
+            slot.click(timeout=5000, force=True)
+            cita.wait_for_timeout(1500)
 
-        # Critérios de "sem vaga"
-        sem_vaga = (
-            "No hay horas disponibles" in body
-            or "Inténtelo de nuevo" in body
-            or "No hay horas disponibles." in body
-        )
+            shot = "vaga.png"
+            cita.screenshot(path=shot, full_page=True)
+            tg_send_photo(shot, f"✅ VAGA ENCONTRADA E CLICADA!\n{slot_text}\n{now}\nURL: {cita.url}")
 
-        # Critérios de "tem vaga"
-        tem_vaga = (
-            re.search(r"Hueco\s+libre", body, re.I) is not None
-            or re.search(r"\b\d{2}:\d{2}\b", body) is not None  # horários visíveis
-        )
+            browser.close()
+            return True
+
+        # estado inesperado (mandar só quando debug)
+        if debug_send_estado:
+            shot = "estado.png"
+            cita.screenshot(path=shot, full_page=True)
+            tg_send_photo(shot, f"⚠️ Estado inesperado.\n{now}\nURL: {cita.url}")
 
         browser.close()
-
-        return {
-            "now": now,
-            "url": current,
-            "on_services": on_services,
-            "sem_vaga": sem_vaga,
-            "tem_vaga": tem_vaga,
-            "body_preview": body[:500],
-        }
-
-
-def main():
-    result = check_once()
-
-    now = result["now"]
-    url = result["url"]
-
-    # Modo teste (força mensagem)
-    if FORCE_TEST_ALERT:
-        send_telegram(f"🧪 TESTE OK [{now}]\nCheguei em: {url}\n(Alerta de teste)")
-        return
-
-    # Se nem chegou em services, avisa
-    if not result["on_services"]:
-        send_telegram(f"⚠️ Estado inesperado [{now}]\nNão cheguei em /#services.\nURL: {url}")
-        return
-
-    # Se tem vaga
-    if result["tem_vaga"] and not result["sem_vaga"]:
-        send_telegram(f"✅ VAGA POSSÍVEL! [{now}]\nURL: {url}\nVerifique agora no site!")
-        return
-
-    # Sem vaga (opcional: NÃO mandar telegram toda vez pra não spam)
-    print(f"[{now}] Sem vagas. OK.")
-    print("Preview:", result["body_preview"].replace("\n", " ")[:200])
+        return False
 
 
 if __name__ == "__main__":
-    main()
+    # ✅ TESTE DE ALERTA (se o secret FORCE_TEST = 1)
+    if os.getenv("FORCE_TEST") == "1":
+        tg_send_message("✅ TESTE: Monitor Cita Brasilia está rodando e o Telegram está OK.")
+
+    # ✅ 1 tentativa por execução (sem loop longo)
+    # (o agendamento do GitHub roda a cada 15 minutos)
+    try:
+        check_once(debug_send_estado=True)
+    except Exception as e:
+        print("Erro:", e)
