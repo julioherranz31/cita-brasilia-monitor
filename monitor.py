@@ -40,90 +40,72 @@ def check_once():
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         context = browser.new_context()
+        page = context.new_page()
 
         def on_dialog(d):
             try:
                 d.accept()
-            except Exception:
+            except:
                 pass
 
-        page = context.new_page()
         page.on("dialog", on_dialog)
-        page.goto(URL_INICIAL, wait_until="domcontentloaded", timeout=90_000)
+        page.goto(URL_INICIAL, timeout=90_000)
 
-        # tenta aceitar cookies (se aparecer)
-        for sel in [
-            "button:has-text('Aceitar')",
-            "button:has-text('Aceptar')",
-            "button:has-text('Accept')",
-        ]:
-            try:
-                page.locator(sel).first.click(timeout=1500)
-                break
-            except Exception:
-                pass
+        # aceita cookies se aparecer
+        try:
+            page.locator("button:has-text('Aceitar'), button:has-text('Aceptar')").click(timeout=3000)
+        except:
+            pass
 
-        # ✅ CORREÇÃO: clicar pelo href que contém 'citaconsular' (não depende de texto)
-        # isso evita quebrar quando mudam o nome do link.
+        # entra no citaconsular
         page.locator("a[href*='citaconsular']").first.click(timeout=30_000)
-        page.wait_for_timeout(2000)
 
-        # se abrir nova aba, captura; se não, usa a mesma
-        try:
-            context.wait_for_event("page", timeout=15_000)
-            cita = context.pages[-1]
-        except Exception:
-            cita = page
-
+        # pega a nova aba
+        context.wait_for_event("page", timeout=20_000)
+        cita = context.pages[-1]
         cita.on("dialog", on_dialog)
-        cita.wait_for_load_state("domcontentloaded", timeout=90_000)
+        cita.wait_for_load_state("domcontentloaded")
 
-        # botão continuar (se existir)
-        try:
-            cita.get_by_role(
-                "button",
-                name=re.compile(r"Continue\s*/\s*Continuar|Continue|Continuar", re.I),
-            ).click(timeout=30_000)
-        except Exception:
-            pass
+        # ✅ PASSO QUE FALTAVA: clicar em CONTINUE / CONTINUAR
+        cita.get_by_role(
+            "button",
+            name=re.compile("Continue|Continuar", re.I)
+        ).click(timeout=30_000)
 
-        # espera chegar em #services (quando o widget carrega)
-        try:
-            cita.wait_for_url(re.compile(r".*/#services$"), timeout=90_000)
-        except Exception:
-            # se não mudou a URL, ainda assim pode ter carregado
-            pass
+        # espera a página de serviços
+        cita.wait_for_url(re.compile("#services"), timeout=60_000)
+        cita.wait_for_timeout(2000)
 
-        cita.wait_for_timeout(1500)
-        body = cita.locator("body").inner_text(timeout=10_000)
+        body = cita.locator("body").inner_text()
         now = datetime.now().strftime("%d/%m/%Y %H:%M")
 
-        # 🔕 modo silencioso: não manda mensagem quando não tem vaga
         if "No hay horas disponibles" in body:
             print(f"[{now}] Sem vagas")
             browser.close()
             return
 
-        # ✅ procura e clica no primeiro horário disponível
-        slot = cita.locator(r"text=/\b\d{2}:\d{2}\b.*Hueco libre/").first
+        # procura horário livre
+        slot = cita.locator(r"text=/\d{2}:\d{2}.*Hueco libre/").first
+
         if slot.count() > 0:
-            slot_text = slot.inner_text(timeout=2000).strip()
-            slot.click(timeout=5000, force=True)
+            txt = slot.inner_text()
+            slot.click(force=True)
             cita.wait_for_timeout(1500)
 
-            final_url = cita.url
             shot = "vaga.png"
             cita.screenshot(path=shot, full_page=True)
 
             tg_send_photo(
                 shot,
-                caption=f"✅ VAGA ENCONTRADA E CLICADA!\n{slot_text}\n{now}\nURL: {final_url}",
+                f"✅ VAGA ENCONTRADA!\n{txt}\n{now}\n{cita.url}"
             )
         else:
-            # caso inesperado: manda screenshot para você ver o que apareceu
             shot = "estado.png"
             cita.screenshot(path=shot, full_page=True)
-            tg_send_photo(shot, f"⚠️ Estado inesperado.\n{now}\nURL: {cita.url}")
+            tg_send_photo(
+                shot,
+                f"⚠️ Página carregada mas sem horários visíveis\n{now}\n{cita.url}"
+            )
 
         browser.close()
 
