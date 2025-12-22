@@ -5,23 +5,6 @@ import requests
 from datetime import datetime
 from playwright.sync_api import sync_playwright
 
-def teste_telegram():
-    import requests
-    import os
-
-    token = os.environ.get("TELEGRAM_BOT_TOKEN")
-    chat_id = os.environ.get("TELEGRAM_CHAT_ID")
-
-    msg = "✅ TESTE OK — Telegram conectado com sucesso!"
-
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
-    requests.post(url, data={
-        "chat_id": chat_id,
-        "text": msg
-    })
-
-teste_telegram()
-
 URL_INICIAL = "https://www.exteriores.gob.es/Embajadas/brasilia/pt/Embajada/Paginas/CitaNacionalidadLMD.aspx"
 
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
