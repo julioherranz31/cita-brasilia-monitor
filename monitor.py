@@ -26,6 +26,8 @@ def tg_send_photo(photo_path: str, caption: str):
         )
 
 def check_once():
+    tg_send_message("✅ Teste: robô está rodando no GitHub Actions.")
+
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         context = browser.new_context()
