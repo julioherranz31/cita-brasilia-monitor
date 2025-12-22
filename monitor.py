@@ -5,32 +5,33 @@ import requests
 from datetime import datetime
 from playwright.sync_api import sync_playwright
 
-URL_INICIAL = "https://www.exteriores.gob.es/Embajadas/brasilia/es/ServiciosConsulares/Paginas/index.aspx"
+# Página do consulado (onde existe o link que leva ao citaconsular)
+URL_INICIAL = "https://www.exteriores.gob.es/Embajadas/brasilia/pt/Embajada/Paginas/CitaNacionalidadLMD.aspx"
 
-BOT_TOKEN = os.getenv("8246994744:AAEqO4B0nm0e8ryd1D1Uxq43B7StpbxfBKQ")
-CHAT_ID = os.getenv("6651786553")
+BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 
-def tg_send_message(text):
+def tg_send_message(text: str):
     if not BOT_TOKEN or not CHAT_ID:
-        print("Telegram não configurado.")
+        print("Telegram não configurado (secrets ausentes).")
         return
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    r = requests.post(url, data={"chat_id": CHAT_ID, "text": text}, timeout=20)
+    r = requests.post(url, data={"chat_id": CHAT_ID, "text": text}, timeout=30)
     print("Telegram sendMessage:", r.text)
 
 
-def tg_send_photo(path, caption):
+def tg_send_photo(photo_path: str, caption: str):
     if not BOT_TOKEN or not CHAT_ID:
-        print("Telegram não configurado.")
+        print("Telegram não configurado (secrets ausentes).")
         return
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
-    with open(path, "rb") as f:
+    with open(photo_path, "rb") as f:
         r = requests.post(
             url,
             data={"chat_id": CHAT_ID, "caption": caption},
             files={"photo": f},
-            timeout=30,
+            timeout=60,
         )
     print("Telegram sendPhoto:", r.text)
 
@@ -50,7 +51,7 @@ def check_once():
         page.on("dialog", on_dialog)
         page.goto(URL_INICIAL, wait_until="domcontentloaded", timeout=90_000)
 
-        # tenta aceitar cookies
+        # tenta aceitar cookies (se aparecer)
         for sel in [
             "button:has-text('Aceitar')",
             "button:has-text('Aceptar')",
@@ -62,13 +63,12 @@ def check_once():
             except Exception:
                 pass
 
-        # clica no link de agendamento
-        page.get_by_role(
-            "link",
-            name=re.compile(r"ESCOLHER\s+DATA\s+E\s+HOR", re.I),
-        ).click(timeout=30_000)
+        # ✅ CORREÇÃO: clicar pelo href que contém 'citaconsular' (não depende de texto)
+        # isso evita quebrar quando mudam o nome do link.
+        page.locator("a[href*='citaconsular']").first.click(timeout=30_000)
+        page.wait_for_timeout(2000)
 
-        # nova aba ou mesma aba
+        # se abrir nova aba, captura; se não, usa a mesma
         try:
             context.wait_for_event("page", timeout=15_000)
             cita = context.pages[-1]
@@ -82,31 +82,34 @@ def check_once():
         try:
             cita.get_by_role(
                 "button",
-                name=re.compile(r"Continue|Continuar", re.I),
-            ).click(timeout=20_000)
+                name=re.compile(r"Continue\s*/\s*Continuar|Continue|Continuar", re.I),
+            ).click(timeout=30_000)
         except Exception:
             pass
 
-        # espera serviços
+        # espera chegar em #services (quando o widget carrega)
         try:
             cita.wait_for_url(re.compile(r".*/#services$"), timeout=90_000)
         except Exception:
+            # se não mudou a URL, ainda assim pode ter carregado
             pass
 
-        time.sleep(2)
+        cita.wait_for_timeout(1500)
         body = cita.locator("body").inner_text(timeout=10_000)
         now = datetime.now().strftime("%d/%m/%Y %H:%M")
 
+        # 🔕 modo silencioso: não manda mensagem quando não tem vaga
         if "No hay horas disponibles" in body:
             print(f"[{now}] Sem vagas")
             browser.close()
             return
 
-        slot = cita.locator("text=/\\b\\d{2}:\\d{2}\\b.*Hueco libre/").first
+        # ✅ procura e clica no primeiro horário disponível
+        slot = cita.locator(r"text=/\b\d{2}:\d{2}\b.*Hueco libre/").first
         if slot.count() > 0:
             slot_text = slot.inner_text(timeout=2000).strip()
             slot.click(timeout=5000, force=True)
-            time.sleep(2)
+            cita.wait_for_timeout(1500)
 
             final_url = cita.url
             shot = "vaga.png"
@@ -114,17 +117,13 @@ def check_once():
 
             tg_send_photo(
                 shot,
-                caption=(
-                    "✅ VAGA ENCONTRADA E CLICADA!\n"
-                    f"{slot_text}\n"
-                    f"{now}\n"
-                    f"{final_url}"
-                ),
+                caption=f"✅ VAGA ENCONTRADA E CLICADA!\n{slot_text}\n{now}\nURL: {final_url}",
             )
         else:
+            # caso inesperado: manda screenshot para você ver o que apareceu
             shot = "estado.png"
             cita.screenshot(path=shot, full_page=True)
-            tg_send_photo(shot, f"⚠️ Estado inesperado\n{now}")
+            tg_send_photo(shot, f"⚠️ Estado inesperado.\n{now}\nURL: {cita.url}")
 
         browser.close()
 
