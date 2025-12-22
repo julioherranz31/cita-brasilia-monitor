@@ -38,23 +38,51 @@ def check_once():
 
         page = context.new_page()
         page.on("dialog", on_dialog)
-        page.goto(URL_INICIAL, wait_until="domcontentloaded", timeout=60_000)
+        page.goto(URL_INICIAL, wait_until="domcontentloaded", timeout=90_000)
 
-        with context.expect_page() as newp:
-            page.get_by_role("link", name="ESCOLHER DATA E HORÁRIO").click(timeout=30_000)
+        # tenta aceitar cookies (se aparecer)
+        for sel in ["button:has-text('Aceitar')", "button:has-text('Aceptar')", "button:has-text('Accept')"]:
+            try:
+                page.locator(sel).first.click(timeout=1500)
+                break
+            except Exception:
+                pass
 
-        cita = newp.value
+        # clica no link (sem depender de abrir nova aba)
+        link = page.get_by_role("link", name=re.compile(r"ESCOLHER\s+DATA\s+E\s+HOR", re.I))
+        link.click(timeout=30_000)
+
+        # espera: ou abriu nova aba, ou navegou na mesma
+        cita = None
+        try:
+            # se abrir nova aba, ela aparece aqui
+            context.wait_for_event("page", timeout=15_000)
+            # pega a última aba aberta
+            cita = context.pages[-1]
+        except Exception:
+            # senão, usa a mesma aba
+            cita = page
+
         cita.on("dialog", on_dialog)
-        cita.wait_for_load_state("domcontentloaded", timeout=60_000)
+        cita.wait_for_load_state("domcontentloaded", timeout=90_000)
 
-        cita.get_by_role(
-            "button",
-            name=re.compile(r"Continue\s*/\s*Continuar", re.I)
-        ).click(timeout=30_000)
+        # se estiver no citaconsular e tiver botão Continue
+        try:
+            cita.get_by_role(
+                "button",
+                name=re.compile(r"Continue\s*/\s*Continuar", re.I)
+            ).click(timeout=30_000)
+        except Exception:
+            pass
 
-        cita.wait_for_url(re.compile(r".*/#services$"), timeout=60_000)
+        # às vezes ele já vai direto para #services; em outras, precisa esperar
+        try:
+            cita.wait_for_url(re.compile(r".*/#services$"), timeout=90_000)
+        except Exception:
+            # se não chegou em #services, tenta forçar esperar algum conteúdo do widget
+            cita.wait_for_timeout(2000)
+
         cita.wait_for_timeout(1500)
-
         body = cita.locator("body").inner_text(timeout=10_000)
         now = datetime.now().strftime("%d/%m/%Y %H:%M")
 
