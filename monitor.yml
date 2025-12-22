@@ -4,11 +4,6 @@ on:
   schedule:
     - cron: "*/10 * * * *"
   workflow_dispatch:
-    inputs:
-      test_alert:
-        description: "Enviar alerta de teste no Telegram (1 = sim)"
-        required: false
-        default: "0"
 
 jobs:
   run:
@@ -16,8 +11,7 @@ jobs:
     timeout-minutes: 10
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -26,13 +20,14 @@ jobs:
 
       - name: Install deps
         run: |
+          python -m pip install --upgrade pip
           pip install playwright requests
-          playwright install chromium
+          playwright install --with-deps chromium
 
       - name: Run monitor
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          FORCE_TEST_ALERT: ${{ github.event.inputs.test_alert }}
+          FORCE_TEST: ${{ secrets.FORCE_TEST }}
         run: |
           python monitor.py
