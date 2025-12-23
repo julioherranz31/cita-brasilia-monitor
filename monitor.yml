@@ -2,8 +2,13 @@ name: Monitor Cita Brasilia
 
 on:
   schedule:
-    - cron: "*/6 * * * *"
+    - cron: "*/5 * * * *"   # ⏰ 5 minutos (mude para */3 ou */10 se quiser)
   workflow_dispatch:
+    inputs:
+      test_alert:
+        description: "Enviar teste no Telegram (1 = sim)"
+        required: false
+        default: "0"
 
 jobs:
   run:
@@ -11,7 +16,8 @@ jobs:
     timeout-minutes: 10
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -28,6 +34,6 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          FORCE_TEST: ${{ secrets.FORCE_TEST }}
+          FORCE_TEST_ALERT: ${{ github.event.inputs.test_alert }}
         run: |
           python monitor.py
