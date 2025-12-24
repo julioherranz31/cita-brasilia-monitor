@@ -15,7 +15,7 @@ BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 
 # Envia alerta de teste quando FORCE_TEST_ALERT=1 (via workflow_dispatch input)
-FORCE_TEST_ALERT = os.getenv("FORCE_TEST_ALERT", "0") == "1"
+FORCE_TEST_ALERT = os.getenv("FORCE_TEST_ALERT", "1") == "1"
 
 
 def now_br() -> str:
