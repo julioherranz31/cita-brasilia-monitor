@@ -2,7 +2,7 @@ name: Monitor Cita Brasilia
 
 on:
   schedule:
-    - cron: "*/5 * * * *"   # a cada 5 minutos
+    - cron: "*/5 * * * *"   # 5 minutos (troque para */3 ou */10 se quiser)
   workflow_dispatch:
     inputs:
       test_alert:
@@ -32,7 +32,9 @@ jobs:
 
       - name: Run monitor
         env:
+          MONITOR_URL: ${{ secrets.MONITOR_URL }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          FORCE_TEST_ALERT: ${{ github.event.inputs.test_alert }}
-        run: python monitor.py
+          TEST_ALERT: ${{ github.event.inputs.test_alert }}
+        run: |
+          python monitor.py
