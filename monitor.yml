@@ -2,7 +2,7 @@ name: Monitor Cita Brasilia
 
 on:
   schedule:
-    - cron: "*/10 * * * *"   # 5 minutos (troque para */3 ou */10 se quiser)
+    - cron: "*/5 * * * *"   # 5 minutos (mude p/ */10 se quiser 10)
   workflow_dispatch:
     inputs:
       test_alert:
@@ -13,7 +13,7 @@ on:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 12
 
     steps:
       - name: Checkout
@@ -32,9 +32,8 @@ jobs:
 
       - name: Run monitor
         env:
-          MONITOR_URL: ${{ secrets.MONITOR_URL }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          TEST_ALERT: ${{ github.event.inputs.test_alert }}
-        run: |
-          python monitor.py
+          MONITOR_URL: ${{ secrets.MONITOR_URL }}
+          TEST_ALERT: ${{ github.event.inputs.test_alert || secrets.TEST_ALERT || '0' }}
+        run: python monitor.py
