@@ -2,7 +2,7 @@ name: Monitor Cita Brasilia
 
 on:
   schedule:
-    - cron: "*/5 * * * *"   # 5 minutos (troque para */3 ou */10 se quiser)
+    - cron: "*/10 * * * *"   # 5 minutos (troque para */3 ou */10 se quiser)
   workflow_dispatch:
     inputs:
       test_alert:
