@@ -24,9 +24,10 @@ jobs:
           pip install playwright requests
           playwright install chromium
 
-      - name: Run monitor
+           - name: Run monitor
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: |
-          python monitor.py
+          MONITOR_URL: ${{ secrets.MONITOR_URL }}
+          TEST_ALERT: ${{ github.event.inputs.test_alert || secrets.TEST_ALERT || '0' }}
+        run: python monitor.py
